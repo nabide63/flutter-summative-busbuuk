@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "999014746798",
+    "project_id": "busbuuk-app",
+    "storage_bucket": "busbuuk-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:999014746798:android:b2202b6057e42a2133bb3f",
+        "android_client_info": {
+          "package_name": "com.example.busbuuk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDZgvEOrVslhjvYH5t8CQunmEEDv4Q6kGU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

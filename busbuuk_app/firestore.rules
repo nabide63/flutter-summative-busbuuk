@@ -1,0 +1,90 @@
+rules_version = '2';
+
+// keeps everyone locked out except the owner of a doc, plus role-based access
+// for bus-company onboarders (companyAdmin) and the platform super-admin -
+// matches the user/bus/company/booking model used across the providers/
+// services layer. Role/companyId live on the caller's own users/{uid} doc
+// (no Cloud Functions/custom claims available on the free Spark plan), so
+// every admin check below does a get() against that doc - cheap at this
+// project's scale, but worth knowing get() adds read cost/latency per write.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function callerDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isSuperAdmin() {
+      return request.auth != null && callerDoc().role == 'superAdmin';
+    }
+
+    function isCompanyAdminFor(companyId) {
+      return request.auth != null
+        && callerDoc().role == 'companyAdmin'
+        && callerDoc().companyId == companyId;
+    }
+
+    match /users/{userId} {
+      // self can always read/write their own profile; superAdmin can also
+      // read/create/update any profile - the create clause is what lets the
+      // onboarder-provisioning flow write a new companyAdmin's profile doc
+      // while signed in as the super-admin, not the new user.
+      allow read: if request.auth != null && (request.auth.uid == userId || isSuperAdmin());
+      allow create: if request.auth != null && (request.auth.uid == userId || isSuperAdmin());
+      allow update: if request.auth != null && (request.auth.uid == userId || isSuperAdmin());
+      allow delete: if false;
+    }
+
+    match /companies/{companyId} {
+      // bus companies are managed by the super-admin only; any signed-in
+      // user (e.g. an onboarder picking their own company) can read them
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+
+    match /buses/{busId} {
+      // bus catalog is managed by the owning company's onboarder or the
+      // super-admin; every passenger can read it
+      allow read: if request.auth != null;
+      allow create: if isSuperAdmin() || isCompanyAdminFor(request.resource.data.companyId);
+      // full write stays admin-only, but any signed-in passenger's booking
+      // flow needs to decrement availableSeats alongside flipping their
+      // seat docs (see confirmBookingAndMarkSeats) - so carve out an
+      // exception for updates that touch only that one counter field,
+      // same broadness tradeoff as the seats subcollection below.
+      allow update: if isSuperAdmin() || isCompanyAdminFor(resource.data.companyId)
+        || (request.auth != null
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['availableSeats']));
+      allow delete: if isSuperAdmin() || isCompanyAdminFor(resource.data.companyId);
+
+      match /seats/{seatId} {
+        allow read: if request.auth != null;
+        // stays broad on purpose: a passenger's own booking flips a seat to
+        // booked, and an onboarder flips seats for walk-in terminal
+        // bookings - both need write access here. Restricting this to
+        // "only the owning company admin, or only the booking's own
+        // passenger" would need field-level diff rules; accepted as a
+        // simplification at this project's scale rather than a fix.
+        allow write: if request.auth != null;
+      }
+    }
+
+    match /destinations/{destinationId} {
+      // curated by the super-admin, shown in the home screen carousel for
+      // every signed-in passenger
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+
+    match /bookings/{bookingId} {
+      // the passenger who made the booking can read it back; so can the
+      // admin of the company whose bus it was made against, so onboarders
+      // can see who's booked their buses and follow up with the passenger
+      allow read: if request.auth != null
+        && (resource.data.userId == request.auth.uid || isCompanyAdminFor(resource.data.companyId));
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if false;
+      // owner can clear a trip from their own history (see FirestoreService.deleteBooking)
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+  }
+}
