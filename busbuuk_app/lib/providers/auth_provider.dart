@@ -1,4 +1,6 @@
 // login/signup/logout state, wraps AuthService + FirebaseAuth
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
@@ -40,6 +42,10 @@ class AuthProvider extends ChangeNotifier {
     });
   }
 
+  // network calls are wrapped in a timeout so a stalled connection surfaces
+  // as an error instead of leaving the sign-in button spinning forever
+  static const _networkTimeout = Duration(seconds: 15);
+
   Future<bool> signUp({
     required String name,
     required String email,
@@ -48,10 +54,9 @@ class AuthProvider extends ChangeNotifier {
   }) async {
     _setLoading(true);
     try {
-      final credential = await _authService.signUp(
-        email: email,
-        password: password,
-      );
+      final credential = await _authService
+          .signUp(email: email, password: password)
+          .timeout(_networkTimeout);
       final uid = credential.user!.uid;
 
       final newUser = UserModel(
@@ -61,11 +66,14 @@ class AuthProvider extends ChangeNotifier {
         phone: phone,
         createdAt: DateTime.now(),
       );
-      await _firestoreService.createUserProfile(newUser);
+      await _firestoreService.createUserProfile(newUser).timeout(_networkTimeout);
 
       _currentUser = newUser;
       _errorMessage = null;
       return true;
+    } on TimeoutException {
+      _errorMessage = 'Connection timed out. Check your internet and try again.';
+      return false;
     } catch (e) {
       _errorMessage = e.toString();
       return false;
@@ -77,15 +85,17 @@ class AuthProvider extends ChangeNotifier {
   Future<bool> signIn({required String email, required String password}) async {
     _setLoading(true);
     try {
-      final credential = await _authService.signIn(
-        email: email,
-        password: password,
-      );
-      _currentUser = await _firestoreService.getUserProfile(
-        credential.user!.uid,
-      );
+      final credential = await _authService
+          .signIn(email: email, password: password)
+          .timeout(_networkTimeout);
+      _currentUser = await _firestoreService
+          .getUserProfile(credential.user!.uid)
+          .timeout(_networkTimeout);
       _errorMessage = null;
       return true;
+    } on TimeoutException {
+      _errorMessage = 'Connection timed out. Check your internet and try again.';
+      return false;
     } catch (e) {
       _errorMessage = e.toString();
       return false;
