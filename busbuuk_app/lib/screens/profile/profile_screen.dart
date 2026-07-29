@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/settings_provider.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -99,9 +100,48 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Future<void> _pickLanguage(SettingsProvider settings) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            for (final option in const ['English', 'French', 'Swahili'])
+              ListTile(
+                title: Text(option),
+                trailing: option == settings.language ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(context, option),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (choice != null) settings.setLanguage(choice);
+  }
+
+  Future<void> _pickTextSize(SettingsProvider settings) async {
+    final choice = await showModalBottomSheet<TextSizeOption>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            for (final option in TextSizeOption.values)
+              ListTile(
+                title: Text(option.label),
+                trailing: option == settings.textSize ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(context, option),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (choice != null) settings.setTextSize(choice);
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().currentUser;
+    final settings = context.watch<SettingsProvider>();
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -154,16 +194,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               icon: Icons.notifications_none_outlined,
                               label: 'Notifications',
                               colorScheme: colorScheme,
-                              trailingText: 'On',
+                              trailingText: settings.notificationsEnabled ? 'On' : 'Off',
                               trailingTextColor: colorScheme.primary,
-                              onTap: () => _comingSoon('Notification settings'),
+                              showChevron: false,
+                              onTap: () =>
+                                  settings.setNotificationsEnabled(!settings.notificationsEnabled),
                             ),
                             _SettingsTile(
                               icon: Icons.language_outlined,
                               label: 'Language',
                               colorScheme: colorScheme,
-                              trailingText: 'English (US)',
-                              onTap: () => _comingSoon('Language settings'),
+                              trailingText: settings.language,
+                              onTap: () => _pickLanguage(settings),
+                            ),
+                            _SettingsTile(
+                              icon: Icons.text_fields_outlined,
+                              label: 'Text Size',
+                              colorScheme: colorScheme,
+                              trailingText: settings.textSize.label,
+                              onTap: () => _pickTextSize(settings),
                             ),
                           ],
                         ),

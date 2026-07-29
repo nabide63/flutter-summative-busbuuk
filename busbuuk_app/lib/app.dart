@@ -7,6 +7,7 @@ import 'providers/auth_provider.dart';
 import 'providers/search_provider.dart';
 import 'providers/booking_provider.dart';
 import 'providers/admin_provider.dart';
+import 'providers/settings_provider.dart';
 import 'routes/app_router.dart';
 
 class BusbuukApp extends StatefulWidget {
@@ -18,6 +19,7 @@ class BusbuukApp extends StatefulWidget {
 
 class _BusbuukAppState extends State<BusbuukApp> {
   late final AuthProvider _authProvider;
+  late final SettingsProvider _settingsProvider;
   late final GoRouter _router;
 
   @override
@@ -27,6 +29,9 @@ class _BusbuukAppState extends State<BusbuukApp> {
     // router needs this exact instance to listen to for its auth redirect
     _authProvider = AuthProvider();
     _router = buildRouter(_authProvider);
+    // loads saved preferences (notifications/language/text size) from disk so
+    // they're restored on every cold start, not just kept in memory
+    _settingsProvider = SettingsProvider()..load();
   }
 
   @override
@@ -37,12 +42,21 @@ class _BusbuukAppState extends State<BusbuukApp> {
         ChangeNotifierProvider(create: (_) => SearchProvider()),
         ChangeNotifierProvider(create: (_) => BookingProvider()),
         ChangeNotifierProvider(create: (_) => AdminProvider()),
+        ChangeNotifierProvider.value(value: _settingsProvider),
       ],
-      child: MaterialApp.router(
-        title: 'Busbuuk',
-        debugShowCheckedModeBanner: false,
-        theme: _buildTheme(),
-        routerConfig: _router,
+      child: Consumer<SettingsProvider>(
+        builder: (context, settings, _) => MaterialApp.router(
+          title: 'Busbuuk',
+          debugShowCheckedModeBanner: false,
+          theme: _buildTheme(),
+          routerConfig: _router,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: TextScaler.linear(settings.textSize.scale),
+            ),
+            child: child!,
+          ),
+        ),
       ),
     );
   }
