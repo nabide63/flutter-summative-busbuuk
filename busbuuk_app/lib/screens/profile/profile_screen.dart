@@ -1,5 +1,6 @@
 // Profile Screen
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +9,7 @@ import 'package:provider/provider.dart';
 
 import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/search_provider.dart';
 import '../../providers/settings_provider.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -19,6 +21,15 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   bool _isUpdatingPhoto = false;
+
+  // build() re-decodes this on every AuthProvider notifyListeners() (sign-out
+  // fires it multiple times in quick succession), which was janky enough to
+  // stall the UI - cache the decoded bytes per base64 string like
+  // _DestinationCard does on the home screen.
+  static final Map<String, Uint8List> _decodedImageCache = {};
+
+  Uint8List _decodedImage(String base64Image) =>
+      _decodedImageCache.putIfAbsent(base64Image, () => base64Decode(base64Image));
 
   Future<void> _confirmSignOut(BuildContext context) async {
     final confirmed = await showDialog<bool>(
@@ -35,6 +46,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     // router redirect handles sending us back to /login once isLoggedIn flips
     if (confirmed == true && context.mounted) {
+      // drop any stray buses listener left over from an earlier search -
+      // otherwise it outlives sign-out and gets rejected by Firestore rules
+      // once the auth token clears (harmless, but noisy)
+      context.read<SearchProvider>().clearResults();
       await context.read<AuthProvider>().signOut();
     }
   }
@@ -296,7 +311,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       radius: 50,
                       backgroundColor: colorScheme.primary,
                       backgroundImage: user.profileImageBase64 != null
-                          ? MemoryImage(base64Decode(user.profileImageBase64!))
+                          ? MemoryImage(_decodedImage(user.profileImageBase64!))
                           : null,
                       child: user.profileImageBase64 == null
                           ? Text(
