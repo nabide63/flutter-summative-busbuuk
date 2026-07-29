@@ -817,6 +817,16 @@ class _DestinationCard extends StatelessWidget {
   final DestinationModel destination;
   const _DestinationCard({required this.destination});
 
+  // HomeScreen rebuilds this on every setState (passenger count, date
+  // picker, trip toggle...), so cache the decoded bytes per destination -
+  // otherwise every keystroke re-decodes and re-decompresses every photo.
+  static final Map<String, Uint8List> _decodedImageCache = {};
+
+  Uint8List get _imageBytes => _decodedImageCache.putIfAbsent(
+    destination.id,
+    () => base64Decode(destination.imageBase64),
+  );
+
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
@@ -825,7 +835,7 @@ class _DestinationCard extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           Image.memory(
-            base64Decode(destination.imageBase64),
+            _imageBytes,
             fit: BoxFit.cover,
             errorBuilder: (context, error, stackTrace) =>
                 const ColoredBox(color: Color(0xFF001856)),
