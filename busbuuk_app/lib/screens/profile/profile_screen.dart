@@ -398,11 +398,10 @@ class _SectionCard extends StatelessWidget {
             ),
           ),
         ],
-        Container(
-          decoration: BoxDecoration(
-            color: colorScheme.surface,
-            borderRadius: BorderRadius.circular(18),
-          ),
+        Material(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(18),
+          clipBehavior: Clip.antiAlias,
           child: Column(
             children: [
               for (var i = 0; i < rows.length; i++) ...[
