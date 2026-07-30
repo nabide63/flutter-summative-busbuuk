@@ -5,7 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 Future<void> launchPhoneCall(BuildContext context, String phoneNumber) async {
   final uri = Uri(scheme: 'tel', path: phoneNumber);
-  final launched = await launchUrl(uri);
+  final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
 
   if (!launched && context.mounted) {
     ScaffoldMessenger.of(context).showSnackBar(
