@@ -18,7 +18,7 @@ class _AdminCompanyListScreenState extends State<AdminCompanyListScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AdminProvider>().fetchCompanies();
+      context.read<AdminProvider>().listenCompanies();
     });
   }
 

@@ -26,7 +26,7 @@ class _AdminBookingsScreenState extends State<AdminBookingsScreen> {
   Future<void> _load() async {
     final companyId = context.read<AuthProvider>().currentUser?.companyId;
     if (companyId != null) {
-      await context.read<AdminProvider>().fetchCompanyBookings(companyId);
+      context.read<AdminProvider>().listenCompanyBookings(companyId);
     }
   }
 

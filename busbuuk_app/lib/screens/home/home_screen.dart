@@ -53,7 +53,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AdminProvider>().fetchDestinations();
+      context.read<AdminProvider>().listenDestinations();
     });
   }
 

@@ -21,7 +21,7 @@ class _AdminDestinationsScreenState extends State<AdminDestinationsScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AdminProvider>().fetchDestinations();
+      context.read<AdminProvider>().listenDestinations();
     });
   }
 
@@ -60,7 +60,7 @@ class _AdminDestinationsScreenState extends State<AdminDestinationsScreen> {
         child: const Icon(Icons.add),
       ),
       body: RefreshIndicator(
-        onRefresh: () => context.read<AdminProvider>().fetchDestinations(),
+        onRefresh: () async => context.read<AdminProvider>().listenDestinations(),
         child: admin.isLoading && admin.destinations.isEmpty
             ? const Center(child: CircularProgressIndicator())
             : admin.destinations.isEmpty

@@ -22,6 +22,15 @@ class FirestoreService {
     return UserModel.fromMap(doc.data()!);
   }
 
+  // live so a profile edit made straight from the Firestore console (or from
+  // another device) shows up on the Profile screen without a re-login
+  Stream<UserModel?> streamUserProfile(String uid) {
+    return _db.collection('users').doc(uid).snapshots().map((doc) {
+      if (!doc.exists) return null;
+      return UserModel.fromMap(doc.data()!);
+    });
+  }
+
   // no Firebase Storage on the free plan, so just save the pic as base64 on the user doc
   Future<void> updateProfileImage(String uid, String base64Image) {
     return _db.collection('users').doc(uid).update({
@@ -66,13 +75,15 @@ class FirestoreService {
 
   // ---- seats ----
 
-  Future<List<SeatModel>> getSeatsForBus(String busId) async {
-    final snapshot = await _db
+  // live so a seat booked/toggled by someone else (or from the console)
+  // while this screen is open updates instantly instead of going stale
+  Stream<List<SeatModel>> streamSeatsForBus(String busId) {
+    return _db
         .collection('buses')
         .doc(busId)
         .collection('seats')
-        .get();
-    return snapshot.docs.map((d) => SeatModel.fromMap(d.data())).toList();
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((d) => SeatModel.fromMap(d.data())).toList());
   }
 
   // ---- bookings ----
@@ -101,13 +112,15 @@ class FirestoreService {
     await batch.commit();
   }
 
-  Future<List<BookingModel>> getUserBookings(String userId) async {
-    final snapshot = await _db
+  // live so a booking made/cancelled elsewhere (or edited from the console)
+  // shows up on My Bookings instantly
+  Stream<List<BookingModel>> streamUserBookings(String userId) {
+    return _db
         .collection('bookings')
         .where('userId', isEqualTo: userId)
         .orderBy('bookingDate', descending: true)
-        .get();
-    return snapshot.docs.map((d) => BookingModel.fromMap(d.data())).toList();
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((d) => BookingModel.fromMap(d.data())).toList());
   }
 
   // just clears a completed trip from history, nothing to undo seat-wise
@@ -117,13 +130,13 @@ class FirestoreService {
   }
 
   // so an onboarder can see who booked their buses and call them if needed
-  Future<List<BookingModel>> getCompanyBookings(String companyId) async {
-    final snapshot = await _db
+  Stream<List<BookingModel>> streamCompanyBookings(String companyId) {
+    return _db
         .collection('bookings')
         .where('companyId', isEqualTo: companyId)
         .orderBy('bookingDate', descending: true)
-        .get();
-    return snapshot.docs.map((d) => BookingModel.fromMap(d.data())).toList();
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((d) => BookingModel.fromMap(d.data())).toList());
   }
 
   // ---- admin: companies ----
@@ -132,9 +145,12 @@ class FirestoreService {
     return _db.collection('companies').doc(company.id).set(company.toMap());
   }
 
-  Future<List<BusCompanyModel>> getCompanies() async {
-    final snapshot = await _db.collection('companies').get();
-    return snapshot.docs.map((d) => BusCompanyModel.fromMap(d.data())).toList();
+  // live so a company added/renamed from the console shows up without a refresh
+  Stream<List<BusCompanyModel>> streamCompanies() {
+    return _db
+        .collection('companies')
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((d) => BusCompanyModel.fromMap(d.data())).toList());
   }
 
   // ---- admin: buses & seats ----
@@ -160,12 +176,13 @@ class FirestoreService {
     await batch.commit();
   }
 
-  Future<List<BusModel>> getBusesForCompany(String companyId) async {
-    final snapshot = await _db
+  // live so an onboarder's own bus list stays in sync with the console
+  Stream<List<BusModel>> streamBusesForCompany(String companyId) {
+    return _db
         .collection('buses')
         .where('companyId', isEqualTo: companyId)
-        .get();
-    return snapshot.docs.map((d) => BusModel.fromMap(d.data())).toList();
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((d) => BusModel.fromMap(d.data())).toList());
   }
 
   Future<void> createSeatsForBus(String busId, List<SeatModel> seats) async {
@@ -219,13 +236,13 @@ class FirestoreService {
     return _db.collection('destinations').doc(destinationId).delete();
   }
 
-  Future<List<DestinationModel>> getDestinations() async {
-    final snapshot = await _db
+  // live so the home carousel updates the moment a destination is added,
+  // edited, or removed from the console
+  Stream<List<DestinationModel>> streamDestinations() {
+    return _db
         .collection('destinations')
         .orderBy('order')
-        .get();
-    return snapshot.docs
-        .map((d) => DestinationModel.fromMap(d.data()))
-        .toList();
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((d) => DestinationModel.fromMap(d.data())).toList());
   }
 }

@@ -1,4 +1,6 @@
 // holds seat selection, passenger details and payment state for the booking flow
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import '../models/bus_model.dart';
 import '../models/seat_model.dart';
@@ -6,31 +8,34 @@ import '../models/passenger_model.dart';
 import '../models/booking_model.dart';
 import '../services/firestore_service.dart';
 
-typedef SeatFetcher = Future<List<SeatModel>> Function(String busId);
+typedef SeatStreamer = Stream<List<SeatModel>> Function(String busId);
 typedef BookingConfirmer =
     Future<void> Function(BookingModel booking, List<String> seatNumbers);
-typedef BookingsFetcher = Future<List<BookingModel>> Function(String userId);
+typedef BookingsStreamer = Stream<List<BookingModel>> Function(String userId);
 typedef BookingDeleter = Future<void> Function(String bookingId);
 
 class BookingProvider extends ChangeNotifier {
   // all injectable so previews/tests can swap in mock data without needing
   // Firebase.initializeApp() to have run.
   BookingProvider({
-    SeatFetcher? getSeatsForBus,
+    SeatStreamer? streamSeatsForBus,
     BookingConfirmer? confirmBookingAndMarkSeats,
-    BookingsFetcher? getUserBookings,
+    BookingsStreamer? streamUserBookings,
     BookingDeleter? deleteBooking,
-  }) : _getSeatsForBus = getSeatsForBus ?? FirestoreService().getSeatsForBus,
+  }) : _streamSeatsForBus = streamSeatsForBus ?? FirestoreService().streamSeatsForBus,
        _confirmBookingAndMarkSeats =
            confirmBookingAndMarkSeats ??
            FirestoreService().confirmBookingAndMarkSeats,
-       _getUserBookings = getUserBookings ?? FirestoreService().getUserBookings,
+       _streamUserBookings = streamUserBookings ?? FirestoreService().streamUserBookings,
        _deleteBooking = deleteBooking ?? FirestoreService().deleteBooking;
 
-  final SeatFetcher _getSeatsForBus;
+  final SeatStreamer _streamSeatsForBus;
   final BookingConfirmer _confirmBookingAndMarkSeats;
-  final BookingsFetcher _getUserBookings;
+  final BookingsStreamer _streamUserBookings;
   final BookingDeleter _deleteBooking;
+
+  StreamSubscription<List<SeatModel>>? _seatsSub;
+  StreamSubscription<List<BookingModel>>? _bookingsSub;
 
   BusModel? _selectedBus;
   List<SeatModel> _seats = [];
@@ -54,22 +59,43 @@ class BookingProvider extends ChangeNotifier {
   double get totalAmount =>
       (_selectedBus?.price ?? 0) * selectedSeatNumbers.length;
 
-  // called when the user taps into a bus from search results
+  // called when the user taps into a bus from search results. stays
+  // subscribed afterwards so a seat booked by someone else (or toggled from
+  // the console) while this screen is open updates live
   Future<void> selectBus(BusModel bus) async {
     _selectedBus = bus;
     _isLoading = true;
     notifyListeners();
 
-    try {
-      _seats = await _getSeatsForBus(bus.id);
-      _errorMessage = null;
-    } catch (e) {
-      _errorMessage = e.toString();
-      _seats = [];
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+    _seatsSub?.cancel();
+    final firstSnapshot = Completer<void>();
+    _seatsSub = _streamSeatsForBus(bus.id).listen(
+      (freshSeats) {
+        // preserve local seat picks across snapshots - a fresh SeatModel
+        // comes back on every emission, so isSelected would otherwise reset
+        // whenever an unrelated seat changes
+        final previouslySelected =
+            _seats.where((s) => s.isSelected).map((s) => s.seatNumber).toSet();
+        _seats = [
+          for (final seat in freshSeats)
+            SeatModel(seatNumber: seat.seatNumber, isBooked: seat.isBooked)
+              ..isSelected = !seat.isBooked && previouslySelected.contains(seat.seatNumber),
+        ];
+        _errorMessage = null;
+        _isLoading = false;
+        notifyListeners();
+        if (!firstSnapshot.isCompleted) firstSnapshot.complete();
+      },
+      onError: (Object e) {
+        _errorMessage = e.toString();
+        _seats = [];
+        _isLoading = false;
+        notifyListeners();
+        if (!firstSnapshot.isCompleted) firstSnapshot.complete();
+      },
+    );
+
+    await firstSnapshot.future;
   }
 
   void toggleSeat(String seatNumber) {
@@ -136,8 +162,9 @@ class BookingProvider extends ChangeNotifier {
       );
 
       await _confirmBookingAndMarkSeats(booking, selectedSeatNumbers);
-      // optimistic local update so My Bookings shows this trip immediately,
-      // without waiting on a re-fetch from Firestore
+      // optimistic local update so My Bookings shows this trip immediately if
+      // its listener hasn't been started yet (or hasn't caught up); once the
+      // live stream is running it reflects the write on its own
       _myBookings = [booking, ..._myBookings];
       _errorMessage = null;
       return booking;
@@ -150,25 +177,31 @@ class BookingProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> fetchMyBookings(String userId) async {
+  // live so a booking made/cancelled elsewhere (or edited from the console)
+  // shows up here instantly, without needing to leave and reopen the screen
+  void listenMyBookings(String userId) {
+    _bookingsSub?.cancel();
     _isLoading = true;
     notifyListeners();
 
-    try {
-      final fetched = await _getUserBookings(userId);
-      // merge rather than overwrite, so a booking just confirmed locally
-      // (see confirmBooking) survives a fetch that hasn't caught up yet
-      final fetchedIds = fetched.map((b) => b.id).toSet();
-      final localOnly = _myBookings.where((b) => !fetchedIds.contains(b.id));
-      _myBookings = [...localOnly, ...fetched]
-        ..sort((a, b) => b.bookingDate.compareTo(a.bookingDate));
-      _errorMessage = null;
-    } catch (e) {
-      _errorMessage = e.toString();
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+    _bookingsSub = _streamUserBookings(userId).listen(
+      (fetched) {
+        // merge rather than overwrite, so a booking just confirmed locally
+        // (see confirmBooking) survives an emission that hasn't caught up yet
+        final fetchedIds = fetched.map((b) => b.id).toSet();
+        final localOnly = _myBookings.where((b) => !fetchedIds.contains(b.id));
+        _myBookings = [...localOnly, ...fetched]
+          ..sort((a, b) => b.bookingDate.compareTo(a.bookingDate));
+        _errorMessage = null;
+        _isLoading = false;
+        notifyListeners();
+      },
+      onError: (Object e) {
+        _errorMessage = e.toString();
+        _isLoading = false;
+        notifyListeners();
+      },
+    );
   }
 
   // removes a trip from the user's history. optimistic so the tile
@@ -195,11 +228,20 @@ class BookingProvider extends ChangeNotifier {
 
   // wipe the booking flow state once a booking is done (or abandoned)
   void resetBookingFlow() {
+    _seatsSub?.cancel();
+    _seatsSub = null;
     _selectedBus = null;
     _seats = [];
     _passengers = [];
     _paymentMethod = 'mtn';
     _errorMessage = null;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _seatsSub?.cancel();
+    _bookingsSub?.cancel();
+    super.dispose();
   }
 }
