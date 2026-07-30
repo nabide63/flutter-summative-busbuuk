@@ -799,14 +799,20 @@ class _AutoScrollCarouselState extends State<_AutoScrollCarousel>
   Widget build(BuildContext context) {
     return SizedBox(
       height: widget.height,
-      child: ListView.builder(
-        controller: _scrollController,
-        scrollDirection: Axis.horizontal,
-        // no manual dragging, the ticker already handles scrolling
-        physics: const NeverScrollableScrollPhysics(),
-        itemBuilder: (context, index) => SizedBox(
-          width: widget.itemExtent,
-          child: widget.items[index % widget.items.length],
+      // the ticker calls jumpTo() every frame forever, which repaints this
+      // subtree's decorated cards (shadows/gradients) 60x/sec - isolate that
+      // into its own compositing layer so it doesn't drag the rest of the
+      // scrollable Home screen along with it
+      child: RepaintBoundary(
+        child: ListView.builder(
+          controller: _scrollController,
+          scrollDirection: Axis.horizontal,
+          // no manual dragging, the ticker already handles scrolling
+          physics: const NeverScrollableScrollPhysics(),
+          itemBuilder: (context, index) => SizedBox(
+            width: widget.itemExtent,
+            child: widget.items[index % widget.items.length],
+          ),
         ),
       ),
     );
@@ -829,6 +835,11 @@ class _DestinationCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // cards render at ~160 logical px wide, but the source photo is saved at
+    // up to 800x1000 - without cacheWidth, Skia decodes and keeps a full-res
+    // bitmap per card (~15x more pixels than ever get painted), which is a
+    // lot of avoidable decode/GC work for a carousel that's always animating
+    final cacheWidth = (160 * MediaQuery.of(context).devicePixelRatio).round();
     return ClipRRect(
       borderRadius: BorderRadius.circular(20),
       child: Stack(
@@ -837,6 +848,7 @@ class _DestinationCard extends StatelessWidget {
           Image.memory(
             _imageBytes,
             fit: BoxFit.cover,
+            cacheWidth: cacheWidth,
             errorBuilder: (context, error, stackTrace) =>
                 const ColoredBox(color: Color(0xFF001856)),
           ),
