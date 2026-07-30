@@ -79,14 +79,20 @@ class _PassengerDetailsScreenState extends State<PassengerDetailsScreen> {
   }
 
   Future<void> _pickDocument(String seat) async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
-      withData: true,
-    );
+    // FileType.custom + allowedExtensions forces Android's document picker to
+    // open and inspect every file to filter by extension, which is very slow.
+    // FileType.any skips that filtering; we validate the extension ourselves.
+    final result = await FilePicker.pickFiles(withData: true);
     final file = result?.files.single;
     final bytes = file?.bytes;
     if (file == null || bytes == null || !mounted) return;
+
+    if ((file.extension ?? '').toLowerCase() != 'pdf') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please pick a PDF file')),
+      );
+      return;
+    }
 
     if (bytes.length > _maxDocumentBytes) {
       ScaffoldMessenger.of(context).showSnackBar(
