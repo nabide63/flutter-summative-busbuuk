@@ -21,7 +21,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final user = context.read<AuthProvider>().currentUser;
       if (user != null && user.isCompanyAdmin) {
-        context.read<AdminProvider>().fetchCompanies();
+        context.read<AdminProvider>().listenCompanies();
       }
     });
   }

@@ -26,7 +26,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   Future<void> _load() async {
     final uid = context.read<AuthProvider>().currentUser?.uid;
     if (uid != null) {
-      await context.read<BookingProvider>().fetchMyBookings(uid);
+      context.read<BookingProvider>().listenMyBookings(uid);
     }
   }
 

@@ -24,7 +24,7 @@ class _AdminBusListScreenState extends State<AdminBusListScreen> {
   Future<void> _load() async {
     final companyId = context.read<AuthProvider>().currentUser?.companyId;
     if (companyId != null) {
-      await context.read<AdminProvider>().fetchMyBuses(companyId);
+      context.read<AdminProvider>().listenMyBuses(companyId);
     }
   }
 

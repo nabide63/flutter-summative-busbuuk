@@ -1,5 +1,7 @@
 // holds state for the bus-company onboarder / super-admin screens: company
 // list, the signed-in onboarder's own buses, seat management, provisioning
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import '../models/booking_model.dart';
 import '../models/bus_company_model.dart';
@@ -10,16 +12,16 @@ import '../models/user_model.dart';
 import '../services/admin_service.dart';
 import '../services/firestore_service.dart';
 
-typedef CompanyLister = Future<List<BusCompanyModel>> Function();
+typedef CompanyStreamer = Stream<List<BusCompanyModel>> Function();
 typedef CompanyCreator = Future<void> Function(BusCompanyModel company);
-typedef CompanyBusLister = Future<List<BusModel>> Function(String companyId);
+typedef CompanyBusStreamer = Stream<List<BusModel>> Function(String companyId);
 typedef BusCreator = Future<void> Function(BusModel bus);
 typedef BusUpdater = Future<void> Function(BusModel bus);
 typedef BusDeleter = Future<void> Function(String busId);
-typedef CompanyBookingsLister = Future<List<BookingModel>> Function(String companyId);
+typedef CompanyBookingsStreamer = Stream<List<BookingModel>> Function(String companyId);
 typedef SeatBatchCreator =
     Future<void> Function(String busId, List<SeatModel> seats);
-typedef AdminSeatFetcher = Future<List<SeatModel>> Function(String busId);
+typedef AdminSeatStreamer = Stream<List<SeatModel>> Function(String busId);
 typedef SeatBookedSetter =
     Future<void> Function(String busId, String seatNumber, bool isBooked);
 typedef OnboarderProvisioner =
@@ -30,7 +32,7 @@ typedef OnboarderProvisioner =
       required String phone,
       required String companyId,
     });
-typedef DestinationLister = Future<List<DestinationModel>> Function();
+typedef DestinationStreamer = Stream<List<DestinationModel>> Function();
 typedef DestinationCreator = Future<void> Function(DestinationModel destination);
 typedef DestinationUpdater = Future<void> Function(DestinationModel destination);
 typedef DestinationDeleter = Future<void> Function(String destinationId);
@@ -39,37 +41,37 @@ class AdminProvider extends ChangeNotifier {
   // all injectable so previews/tests can swap in mock data without needing
   // Firebase.initializeApp() to have run.
   AdminProvider({
-    CompanyLister? getCompanies,
+    CompanyStreamer? streamCompanies,
     CompanyCreator? createCompany,
-    CompanyBusLister? getBusesForCompany,
+    CompanyBusStreamer? streamBusesForCompany,
     BusCreator? createBus,
     BusUpdater? updateBus,
     BusDeleter? deleteBus,
     SeatBatchCreator? createSeatsForBus,
-    AdminSeatFetcher? getSeatsForBus,
+    AdminSeatStreamer? streamSeatsForBus,
     SeatBookedSetter? setSeatBooked,
     OnboarderProvisioner? provisionOnboarder,
-    CompanyBookingsLister? getCompanyBookings,
-    DestinationLister? getDestinations,
+    CompanyBookingsStreamer? streamCompanyBookings,
+    DestinationStreamer? streamDestinations,
     DestinationCreator? createDestination,
     DestinationUpdater? updateDestination,
     DestinationDeleter? deleteDestination,
-  }) : _getCompanies = getCompanies ?? FirestoreService().getCompanies,
+  }) : _streamCompanies = streamCompanies ?? FirestoreService().streamCompanies,
        _createCompany = createCompany ?? FirestoreService().createCompany,
-       _getBusesForCompany =
-           getBusesForCompany ?? FirestoreService().getBusesForCompany,
+       _streamBusesForCompany =
+           streamBusesForCompany ?? FirestoreService().streamBusesForCompany,
        _createBus = createBus ?? FirestoreService().createBus,
        _updateBus = updateBus ?? FirestoreService().updateBus,
        _deleteBus = deleteBus ?? FirestoreService().deleteBus,
        _createSeatsForBus =
            createSeatsForBus ?? FirestoreService().createSeatsForBus,
-       _getSeatsForBus = getSeatsForBus ?? FirestoreService().getSeatsForBus,
+       _streamSeatsForBus = streamSeatsForBus ?? FirestoreService().streamSeatsForBus,
        _setSeatBooked = setSeatBooked ?? FirestoreService().setSeatBooked,
        _provisionOnboarder =
            provisionOnboarder ?? AdminService().provisionOnboarder,
-       _getCompanyBookings =
-           getCompanyBookings ?? FirestoreService().getCompanyBookings,
-       _getDestinations = getDestinations ?? FirestoreService().getDestinations,
+       _streamCompanyBookings =
+           streamCompanyBookings ?? FirestoreService().streamCompanyBookings,
+       _streamDestinations = streamDestinations ?? FirestoreService().streamDestinations,
        _createDestination =
            createDestination ?? FirestoreService().createDestination,
        _updateDestination =
@@ -77,21 +79,27 @@ class AdminProvider extends ChangeNotifier {
        _deleteDestination =
            deleteDestination ?? FirestoreService().deleteDestination;
 
-  final CompanyLister _getCompanies;
+  final CompanyStreamer _streamCompanies;
   final CompanyCreator _createCompany;
-  final CompanyBusLister _getBusesForCompany;
+  final CompanyBusStreamer _streamBusesForCompany;
   final BusCreator _createBus;
   final BusUpdater _updateBus;
   final BusDeleter _deleteBus;
   final SeatBatchCreator _createSeatsForBus;
-  final AdminSeatFetcher _getSeatsForBus;
+  final AdminSeatStreamer _streamSeatsForBus;
   final SeatBookedSetter _setSeatBooked;
   final OnboarderProvisioner _provisionOnboarder;
-  final CompanyBookingsLister _getCompanyBookings;
-  final DestinationLister _getDestinations;
+  final CompanyBookingsStreamer _streamCompanyBookings;
+  final DestinationStreamer _streamDestinations;
   final DestinationCreator _createDestination;
   final DestinationUpdater _updateDestination;
   final DestinationDeleter _deleteDestination;
+
+  StreamSubscription<List<BusCompanyModel>>? _companiesSub;
+  StreamSubscription<List<BusModel>>? _myBusesSub;
+  StreamSubscription<List<SeatModel>>? _selectedBusSeatsSub;
+  StreamSubscription<List<BookingModel>>? _companyBookingsSub;
+  StreamSubscription<List<DestinationModel>>? _destinationsSub;
 
   List<BusCompanyModel> _companies = [];
   List<BusModel> _myBuses = [];
@@ -111,50 +119,68 @@ class AdminProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
-  Future<void> fetchCompanies() async {
+  // live so a company added/renamed from the console (or another admin
+  // session) shows up here without a manual refresh
+  void listenCompanies() {
+    _companiesSub?.cancel();
     _isLoading = true;
     notifyListeners();
-    try {
-      _companies = await _getCompanies();
-      _errorMessage = null;
-    } catch (e) {
-      _errorMessage = e.toString();
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+    _companiesSub = _streamCompanies().listen(
+      (companies) {
+        _companies = companies;
+        _errorMessage = null;
+        _isLoading = false;
+        notifyListeners();
+      },
+      onError: (Object e) {
+        _errorMessage = e.toString();
+        _isLoading = false;
+        notifyListeners();
+      },
+    );
   }
 
-  Future<void> fetchMyBuses(String companyId) async {
+  void listenMyBuses(String companyId) {
+    _myBusesSub?.cancel();
     _isLoading = true;
     notifyListeners();
-    try {
-      _myBuses = await _getBusesForCompany(companyId);
-      _errorMessage = null;
-    } catch (e) {
-      _errorMessage = e.toString();
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+    _myBusesSub = _streamBusesForCompany(companyId).listen(
+      (buses) {
+        _myBuses = buses;
+        _errorMessage = null;
+        _isLoading = false;
+        notifyListeners();
+      },
+      onError: (Object e) {
+        _errorMessage = e.toString();
+        _isLoading = false;
+        notifyListeners();
+      },
+    );
   }
 
   // called when an onboarder taps into a bus from Manage Buses to mark
-  // walk-in terminal seats occupied
-  Future<void> selectBusForSeatManagement(BusModel bus) async {
+  // walk-in terminal seats occupied. stays subscribed so a seat toggled from
+  // another device (or the console) updates live
+  void selectBusForSeatManagement(BusModel bus) {
     _selectedBus = bus;
+    _selectedBusSeatsSub?.cancel();
     _isLoading = true;
     notifyListeners();
-    try {
-      _selectedBusSeats = await _getSeatsForBus(bus.id);
-      _errorMessage = null;
-    } catch (e) {
-      _errorMessage = e.toString();
-      _selectedBusSeats = [];
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+    _selectedBusSeatsSub = _streamSeatsForBus(bus.id).listen(
+      (seats) {
+        _selectedBusSeats = seats;
+        _errorMessage = null;
+        _isLoading = false;
+        notifyListeners();
+      },
+      onError: (Object e) {
+        _errorMessage = e.toString();
+        _selectedBusSeats = [];
+        _isLoading = false;
+        notifyListeners();
+      },
+    );
   }
 
   Future<bool> createCompany(String name) async {
@@ -167,7 +193,6 @@ class AdminProvider extends ChangeNotifier {
         createdAt: DateTime.now(),
       );
       await _createCompany(company);
-      _companies = [..._companies, company];
       _errorMessage = null;
       return true;
     } catch (e) {
@@ -186,7 +211,6 @@ class AdminProvider extends ChangeNotifier {
     try {
       await _createBus(bus);
       await _createSeatsForBus(bus.id, _generateSeats(totalSeats));
-      _myBuses = [..._myBuses, bus];
       _errorMessage = null;
       return true;
     } catch (e) {
@@ -205,7 +229,6 @@ class AdminProvider extends ChangeNotifier {
     notifyListeners();
     try {
       await _updateBus(bus);
-      _myBuses = [for (final b in _myBuses) if (b.id == bus.id) bus else b];
       _errorMessage = null;
       return true;
     } catch (e) {
@@ -222,7 +245,6 @@ class AdminProvider extends ChangeNotifier {
     notifyListeners();
     try {
       await _deleteBus(busId);
-      _myBuses = _myBuses.where((b) => b.id != busId).toList();
       _errorMessage = null;
       return true;
     } catch (e) {
@@ -234,39 +256,37 @@ class AdminProvider extends ChangeNotifier {
     }
   }
 
-  // flips a seat occupied/vacant for a walk-in terminal booking
+  // flips a seat occupied/vacant for a walk-in terminal booking - the live
+  // selectedBusSeats listener above picks up the result on its own
   Future<void> toggleSeatOccupied(String seatNumber, bool newValue) async {
     final bus = _selectedBus;
     if (bus == null) return;
     try {
       await _setSeatBooked(bus.id, seatNumber, newValue);
-      _selectedBusSeats = [
-        for (final seat in _selectedBusSeats)
-          if (seat.seatNumber == seatNumber)
-            SeatModel(seatNumber: seat.seatNumber, isBooked: newValue)
-          else
-            seat,
-      ];
       _errorMessage = null;
-      notifyListeners();
     } catch (e) {
       _errorMessage = e.toString();
       notifyListeners();
     }
   }
 
-  Future<void> fetchCompanyBookings(String companyId) async {
+  void listenCompanyBookings(String companyId) {
+    _companyBookingsSub?.cancel();
     _isLoading = true;
     notifyListeners();
-    try {
-      _companyBookings = await _getCompanyBookings(companyId);
-      _errorMessage = null;
-    } catch (e) {
-      _errorMessage = e.toString();
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+    _companyBookingsSub = _streamCompanyBookings(companyId).listen(
+      (bookings) {
+        _companyBookings = bookings;
+        _errorMessage = null;
+        _isLoading = false;
+        notifyListeners();
+      },
+      onError: (Object e) {
+        _errorMessage = e.toString();
+        _isLoading = false;
+        notifyListeners();
+      },
+    );
   }
 
   Future<bool> provisionOnboarder({
@@ -297,18 +317,25 @@ class AdminProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> fetchDestinations() async {
+  // live so the home carousel and this list update the moment a destination
+  // is added, edited, or removed from the console
+  void listenDestinations() {
+    _destinationsSub?.cancel();
     _isLoading = true;
     notifyListeners();
-    try {
-      _destinations = await _getDestinations();
-      _errorMessage = null;
-    } catch (e) {
-      _errorMessage = e.toString();
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+    _destinationsSub = _streamDestinations().listen(
+      (destinations) {
+        _destinations = destinations;
+        _errorMessage = null;
+        _isLoading = false;
+        notifyListeners();
+      },
+      onError: (Object e) {
+        _errorMessage = e.toString();
+        _isLoading = false;
+        notifyListeners();
+      },
+    );
   }
 
   Future<bool> createDestination(DestinationModel destination) async {
@@ -316,8 +343,6 @@ class AdminProvider extends ChangeNotifier {
     notifyListeners();
     try {
       await _createDestination(destination);
-      _destinations = [..._destinations, destination]
-        ..sort((a, b) => a.order.compareTo(b.order));
       _errorMessage = null;
       return true;
     } catch (e) {
@@ -334,10 +359,6 @@ class AdminProvider extends ChangeNotifier {
     notifyListeners();
     try {
       await _updateDestination(destination);
-      _destinations = [
-        for (final d in _destinations)
-          if (d.id == destination.id) destination else d,
-      ]..sort((a, b) => a.order.compareTo(b.order));
       _errorMessage = null;
       return true;
     } catch (e) {
@@ -354,7 +375,6 @@ class AdminProvider extends ChangeNotifier {
     notifyListeners();
     try {
       await _deleteDestination(destinationId);
-      _destinations = _destinations.where((d) => d.id != destinationId).toList();
       _errorMessage = null;
       return true;
     } catch (e) {
@@ -375,5 +395,15 @@ class AdminProvider extends ChangeNotifier {
           isBooked: false,
         ),
     ];
+  }
+
+  @override
+  void dispose() {
+    _companiesSub?.cancel();
+    _myBusesSub?.cancel();
+    _selectedBusSeatsSub?.cancel();
+    _companyBookingsSub?.cancel();
+    _destinationsSub?.cancel();
+    super.dispose();
   }
 }

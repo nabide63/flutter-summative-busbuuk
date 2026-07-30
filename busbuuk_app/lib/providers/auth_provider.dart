@@ -21,6 +21,10 @@ class AuthProvider extends ChangeNotifier {
   // screen/router know whether we're still checking or actually logged out
   bool _isInitializing = true;
 
+  // keeps currentUser live so an edit made straight from the Firestore
+  // console (or another device) reflects on the Profile screen instantly
+  StreamSubscription<UserModel?>? _profileSub;
+
   UserModel? get currentUser => _currentUser;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
@@ -29,17 +33,26 @@ class AuthProvider extends ChangeNotifier {
 
   AuthProvider() {
     // keep our own user profile in sync whenever firebase's auth state changes
-    _authService.authStateChanges.listen((firebaseUser) async {
+    _authService.authStateChanges.listen((firebaseUser) {
+      _profileSub?.cancel();
       if (firebaseUser == null) {
         _currentUser = null;
         _isInitializing = false;
         notifyListeners();
         return;
       }
-      _currentUser = await _firestoreService.getUserProfile(firebaseUser.uid);
-      _isInitializing = false;
-      notifyListeners();
+      _profileSub = _firestoreService.streamUserProfile(firebaseUser.uid).listen((user) {
+        _currentUser = user;
+        _isInitializing = false;
+        notifyListeners();
+      });
     });
+  }
+
+  @override
+  void dispose() {
+    _profileSub?.cancel();
+    super.dispose();
   }
 
   // network calls are wrapped in a timeout so a stalled connection surfaces
